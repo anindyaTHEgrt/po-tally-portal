@@ -3,14 +3,12 @@ import axios from "axios";
 const api = axios.create({ baseURL: "/api" });
 
 /**
- * Upload both PDFs for parsing.
- * @param {File} sfFile     Salesforce PO PDF
- * @param {File} emailFile  Vendor email PO PDF
+ * Upload Salesforce PO PDF for parsing.
+ * @param {File} sfFile  Salesforce PO PDF
  */
-export async function uploadPDFs(sfFile, emailFile) {
+export async function uploadPDFs(sfFile) {
   const form = new FormData();
-  form.append("sfPO",    sfFile);
-  form.append("emailPO", emailFile);
+  form.append("sfPO", sfFile);
   const { data } = await api.post("/upload", form, {
     headers: { "Content-Type": "multipart/form-data" },
   });

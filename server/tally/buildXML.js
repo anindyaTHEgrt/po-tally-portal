@@ -110,23 +110,24 @@ function xmlEscape(val) {
 
 // ── Master builders ───────────────────────────────────────────────────────────
 
-function buildLedgerXML(party) {
+function buildLedgerXML(party, parentGroup) {
+    const group = parentGroup || "Sundry Creditors";
     return `
 <TALLYMESSAGE xmlns:UDF="TallyUDF">
-  <LEDGER NAME="${xmlEscape(party.partyName)}" ACTION="Create">
-    <NAME>${xmlEscape(party.partyName)}</NAME>
-    <PARENT>Sundry Creditors</PARENT>
+  <LEDGER NAME="${xmlEscape(party.partyName || party.name)}" ACTION="Create">
+    <NAME>${xmlEscape(party.partyName || party.name)}</NAME>
+    <PARENT>${group}</PARENT>
     <GSTREGISTRATIONTYPE>Regular</GSTREGISTRATIONTYPE>
     <PARTYGSTIN>${xmlEscape(party.gstin)}</PARTYGSTIN>
     <PANNO>${xmlEscape(party.pan)}</PANNO>
     <STATENAME>${xmlEscape(party.stateName)}</STATENAME>
     <COUNTRYNAME>India</COUNTRYNAME>
-    <MAILINGNAME>${xmlEscape(party.partyName)}</MAILINGNAME>
+    <MAILINGNAME>${xmlEscape(party.partyName || party.name)}</MAILINGNAME>
     <ADDRESS.LIST TYPE="Address">
       <ADDRESS>${xmlEscape(party.address)}</ADDRESS>
     </ADDRESS.LIST>
     <LANGUAGENAME.LIST>
-      <NAME.LIST TYPE="Name"><NAME>${xmlEscape(party.partyName)}</NAME></NAME.LIST>
+      <NAME.LIST TYPE="Name"><NAME>${xmlEscape(party.partyName || party.name)}</NAME></NAME.LIST>
       <LANGUAGEID>1033</LANGUAGEID>
     </LANGUAGENAME.LIST>
   </LEDGER>
@@ -234,8 +235,8 @@ function buildPurchaseOrderXML(data) {
             <REFERENCE>${voucherNo}</REFERENCE>
             <PARTYLEDGERNAME>${xmlEscape(supplier.name)}</PARTYLEDGERNAME>
             <PERSISTEDVIEW>Invoice Voucher View</PERSISTEDVIEW>
-            <PARTYGSTIN>${xmlEscape(cmpGstin)}</PARTYGSTIN>
-            <PLACEOFSUPPLY>${xmlEscape(cmpState)}</PLACEOFSUPPLY>
+            <PARTYGSTIN>${xmlEscape(supplier.gstin)}</PARTYGSTIN>
+            <PLACEOFSUPPLY>${xmlEscape(supplier.stateName)}</PLACEOFSUPPLY>
             <CMPGSTIN>${xmlEscape(cmpGstin)}</CMPGSTIN>
             <STATENAME>${xmlEscape(cmpState)}</STATENAME>
             <NUMBERINGSTYLE>Manual</NUMBERINGSTYLE>
@@ -248,7 +249,7 @@ function buildPurchaseOrderXML(data) {
             <CONSIGNEESTATENAME>${xmlEscape(shipTo.stateName)}</CONSIGNEESTATENAME>
             <NARRATION>PO Ref: ${xmlEscape(header.sfPORef)} | Supplier: ${xmlEscape(supplier.name)} | Delivery: ${xmlEscape(header.destination)} | Payment: ${xmlEscape(header.paymentTerms)}</NARRATION>
             <LEDGERENTRIES.LIST>
-              <LEDGERNAME>${xmlEscape(billTo.partyName)}</LEDGERNAME>
+              <LEDGERNAME>${xmlEscape(supplier.name)}</LEDGERNAME>
               <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
               <AMOUNT>${totals.grandTotal.toFixed(2)}</AMOUNT>
             </LEDGERENTRIES.LIST>
@@ -264,10 +265,14 @@ function buildPurchaseOrderXML(data) {
 // ── Masters envelope ──────────────────────────────────────────────────────────
 
 function buildMastersXML(data) {
-    const { billTo, lineItems } = data;
+    const { billTo, supplier, lineItems } = data;
     const company = data.tallyCompany || TALLY_COMPANY;
 
-    const ledgerMessage = buildLedgerXML(billTo);
+    // billTo (Bharat Paper Mart) — Sundry Debtors (they issue the PO to us)
+    const billToLedger = buildLedgerXML(billTo, "Sundry Debtors");
+
+    // supplier (JK PAPER LTD.- (PAPER DIVISION)) — Sundry Creditors
+    const supplierLedger = buildLedgerXML(supplier, "Sundry Creditors");
 
     const seen = new Set();
     const stockMessages = lineItems
@@ -289,7 +294,8 @@ function buildMastersXML(data) {
         </STATICVARIABLES>
       </REQUESTDESC>
       <REQUESTDATA>
-        ${ledgerMessage}
+        ${billToLedger}
+        ${supplierLedger}
         ${stockMessages}
       </REQUESTDATA>
     </IMPORTDATA>
