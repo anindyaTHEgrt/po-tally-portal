@@ -99,13 +99,14 @@ function mergePOData(sfData, emailData) {
       sfPORef:       sfData.header.poNumber,
       date:          sfData.header.documentDate,
       deliveryDate:  sfData.header.deliveryDate,
+      termsOfDelivery: emailData.poMeta?.termsOfDelivery || "", // ← add this
       orderType:     sfData.header.orderType,
       distChannel:   sfData.header.distChannel,
       plantDepot:    sfData.header.plantDepot,
       paymentTerms:  sfData.header.paymentTerms,
       insurance:     sfData.header.insurance,
       transportMode: sfData.header.transportMode,
-      destination:   sfData.header.deliveryTo,
+      destination: emailData.delivery?.destination || sfData.header.deliveryTo,
     },
     billTo: {
       ...sfData.billTo,

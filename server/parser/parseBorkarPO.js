@@ -31,7 +31,10 @@ function parseBorkarPO(text) {
   const poNumber    = find(/P\.O\. No\.\s*:\s*\n?(BD\/[\d\/\.\s]+?)(?:\n|Date)/);
   // "Date       :" label then "24/04/2026" on next line — grab either way
   const poDate      = find(/Date\s*:\s*\n?([\d\/]+)/);
+  const termsOfDelivery = find(/Terms of Delivery\s*[:\-]?\s*\n?(.+?)(?:\n)/);
+
   const origDate    = find(/Original Date:\s*\n?([\d\/]+)/);
+  const destination = find(/Destination\s*[:\-]\s*(.+?)(?:\n)/);
 
   // ── Vendor ─────────────────────────────────────────────────────────────────
   const vendorGSTIN = find(/GSTIN NO:\s*(27[A-Z0-9]+)/i);
@@ -100,6 +103,8 @@ function parseBorkarPO(text) {
       poNumber:     poNumber.replace(/\s+/g, " ").trim(),
       date:         poDate,
       originalDate: origDate,
+      termsOfDelivery,
+
     },
     lineItems,
     delivery: {

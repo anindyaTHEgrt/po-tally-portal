@@ -23,7 +23,7 @@ function parseSalesforcePO(text) {
 
 // Using (\S+) to catch EVERYTHING (numbers, letters like 'Apr', slashes, dots)
   const poNumber      = find(/(\S+)\s+Purchase Order No:/);
-  const docDate       = find(/(\S+)\s+Document Date:/);
+  const docDate = find(/([\d]{1,4}[-\/][\d]{1,2}[-\/][\d]{2,4}|[\d]{8})\s+Document Date:/);
   const deliveryDate  = find(/(\S+)\s+Requested Delivery Date:/);
   const internalPONo  = find(/^\s*(\d+)\s+Internal Customer PO NO:/m);
   const paymentTerms  = find(/^\s*(.+?)\s+Payment Terms:/m);
@@ -90,8 +90,8 @@ function parseSalesforcePO(text) {
     const sizeM = materialCode.match(/(\d+\.\d+)X(\d+\.\d+)/);
     let description = `JK TUFFCOTE ${gsm} GSM`;
     if (sizeM) {
-      const w  = parseFloat(sizeM[1]).toString();   // 84.00 → "84"
-      const h  = parseFloat(sizeM[2]).toString();   // 63.50 → "63.5"
+      const w = parseFloat(sizeM[1]).toFixed(1);   // 84.00 → "84.0"
+      const h = parseFloat(sizeM[2]).toFixed(1);   // 63.50 → "63.5"
       description = `TC - ${gsm} GSM - ${w} X ${h}`; // matches Tally exactly
     }
 
@@ -128,8 +128,9 @@ function parseSalesforcePO(text) {
       transportMode, deliveryTo,
     },
     billTo: {
-      partyNo: billToNo, partyName: "BHARAT PAPER MART",
-      address: "219 PODDAR CHAMBER, 2ND FLOOR, 109, S.A. BRELVI ROAD, FORT, MUMBAI",
+      partyName: "BHARAT PAPER MART",
+      address: "219, Podar Chambers, 109, S.A. Brelvi Road, Fort, Mumbai - 400 001",
+      email: "bharatpapermart@gmail.com",
       gstin: billToGSTIN, pan: billToPAN,
       stateName: billToState.stateName, stateCode: billToState.stateCode,
     },
