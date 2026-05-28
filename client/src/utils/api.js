@@ -17,10 +17,22 @@ export async function uploadPDFs(sfFile) {
 
 /**
  * Push merged PO data to TallyPrime.
- * @param {object} poData  Merged PO JSON (possibly edited by user)
+ * @param {object} poData        Merged PO JSON (possibly edited by user)
+ * @param {string} tallyCompany  Optional company name override
  */
-export async function pushToTally(poData) {
-  const { data } = await api.post("/tally/push", { data: poData });
+export async function pushToTally(poData, tallyCompany) {
+  const { data } = await api.post("/tally/push", {
+    data: poData,
+    ...(tallyCompany ? { tallyCompany } : {}),
+  });
+  return data;
+}
+
+/**
+ * Fetch current Tally configuration from the server (.env values).
+ */
+export async function getTallyConfig() {
+  const { data } = await api.get("/tally/config");
   return data;
 }
 

@@ -5,13 +5,13 @@
 
 const GST_RATE = 0.18;
 
-// ── JK PAPER LTD.- (PAPER DIVISION) master record ─────────────────────────────
+// ── JK PAPER LTD. (UNIT CPM) supplier record ──────────────────────────────────
 // Source: Tally ledger screenshot (Party Details panel)
 const JK_PAPER_SUPPLIER = {
-  name:      "JK PAPER LTD.- (PAPER DIVISION)",
-  gstin:     "24AAACT6305N1ZA",          // from screenshot GSTIN/UIN field
-  pan:       "AAACT6305N",               // derived from GSTIN
-  address:   "P.O. CENTRAL PULP MILLS, FORT, SONGADH, DIST. TAPI, GUJARAT",
+  name:      "JK PAPER LTD. (UNIT CPM)",
+  gstin:     "24AAACT6305N2Z9",
+  pan:       "AAACT6305N",
+  address:   "P.O. CENTRAL PULP MILLS, FORT SONGADH, DIST:- TAPI ( GUJARAT )",
   stateName: "Gujarat",
   stateCode: "24",
   phone:     "",

@@ -24,6 +24,20 @@ router.get("/status", async (req, res) => {
 });
 
 /**
+ * GET /api/tally/config
+ * Returns current Tally configuration from environment variables.
+ * Used by the frontend to pre-fill the company name field.
+ */
+router.get("/config", (req, res) => {
+  return res.json({
+    tallyCompany: process.env.TALLY_COMPANY || "BPM TEST",
+    tallyPort:    process.env.TALLY_PORT    || 9000,
+    tallyState:   process.env.TALLY_STATE   || "Maharashtra",
+    tallyGstin:   process.env.TALLY_GSTIN   || "27AAJFB0186H1ZH",
+  });
+});
+
+/**
  * GET /api/tally/resolve-groups?items=DESC1,DESC2,...
  * Debug endpoint — shows which stock group each description resolves to.
  */
