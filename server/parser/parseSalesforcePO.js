@@ -59,7 +59,7 @@ function buildDescription(brandPrefix, gsm, materialCode) {
   if (reelM) {
     const w = parseFloat(reelM[1]);
     const ws = w % 1 === 0 ? w.toFixed(1) : w.toString();
-    return `${code} - ${gsm} GSM - ${ws} CMS IN REELS`;
+    return `${code} - ${gsm} GSM - ${ws} IN REELS`;
   }
 
   return `${name} ${gsm} GSM`;
