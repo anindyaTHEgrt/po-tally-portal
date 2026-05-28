@@ -1,147 +1,195 @@
 /**
  * parseSalesforcePO.js
- *
- * pdf-parse layout:
- *  - Values appear BEFORE their labels: " 356 Internal Customer PO NO:"
- *  - Line items span 4 lines:
- *      "PO260481134-020"
- *      "JK TUFFCOTE 300"
- *      "GSM"
- *      "FBD - JK TUFFCOTEFBD/BDL/84.00X63.50/100/16.0016481092001024.0075776.00SWGO03"
- *    (all item fields concatenated with no spaces in last line)
+ * * Robust parser utilizing a sequential "Zip" method.
+ * Extracts PO references and Material Data blocks independently from the raw
+ * string and merges them, completely avoiding line-break and spacing issues
+ * caused by pdf-parse.
  */
 
 const { cleanAmount, cleanQty, deriveStateFromGSTIN, determineGSTType } = require("./utils");
 
-function parseSalesforcePO(text) {
-  const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+const BRAND_CODE_MAP = {
+  FBD: { tallyCode: "TC", fullName: "JK TUFFCOTE" },
+  CPB: { tallyCode: "PL", fullName: "JK PLATINA"  },
+  CBB: { tallyCode: "UL", fullName: "JK ULTIMA"   },
+};
 
-  function find(pat) {
-    const m = text.match(pat);
-    return m ? m[1].trim() : "";
+/**
+ * Builds the exact Tally nomenclature description.
+ */
+function buildDescription(brandPrefix, gsm, materialCode) {
+  const entry = BRAND_CODE_MAP[brandPrefix];
+  const code  = entry ? entry.tallyCode : brandPrefix;
+  const name  = entry ? entry.fullName  : brandPrefix;
+
+  // Normalize OCR artifacts where a dot is sometimes read as a colon
+  const safeMatCode = materialCode.replace(/:/g, ".");
+
+  const sheetM = safeMatCode.match(/([\d.]+)X([\d.]+)/);
+  if (sheetM) {
+    const fmt = n => parseFloat(n).toFixed(1);
+    return `${code} - ${gsm} GSM - ${fmt(sheetM[1])} X ${fmt(sheetM[2])}`;
   }
 
-// Using (\S+) to catch EVERYTHING (numbers, letters like 'Apr', slashes, dots)
-  const poNumber      = find(/(\S+)\s+Purchase Order No:/);
-  const docDate = find(/([\d]{1,4}[-\/][\d]{1,2}[-\/][\d]{2,4}|[\d]{8})\s+Document Date:/);
-  const deliveryDate  = find(/(\S+)\s+Requested Delivery Date:/);
-  const internalPONo  = find(/^\s*(\d+)\s+Internal Customer PO NO:/m);
-  const paymentTerms  = find(/^\s*(.+?)\s+Payment Terms:/m);
-  const insurance     = find(/^\s*(.+?)\s+Insurance:/m);
-  const orderType     = find(/^\s*(.+?)\s+Order Type\s*:/m) || "JKPL Domestic Sales";
-  const distChannel   = find(/^\s*(.+?)\s+Distribution Channel\s*:/m) || "32 - Direct";
-  const plantDepot    = find(/^\s*(.+?)\s+Plant Depot:/m) || "2200 - JK PAPER LIMITED";
-  const transportMode = find(/^\s*(.+?)\s+Mode Of Transport:/m);
-  const deliveryTo    = find(/^\s*(\w+)\s+Delivery To:/m);
+  const reelM = safeMatCode.match(/\/REL\/([\d.]+)\//);
+  if (reelM) {
+    const w = parseFloat(reelM[1]);
+    const ws = w % 1 === 0 ? w.toFixed(1) : w.toString();
+    return `${code} - ${gsm} GSM - ${ws} CMS IN REELS`;
+  }
 
-  // ── Parties ────────────────────────────────────────────────────────────────
-  const billToGSTIN   = find(/GSTIN No:\s*(27[A-Z0-9]+)/);
-  const billToPAN     = find(/PAN:\s*(AAJFB\w+)/);
-  const billToNo      = find(/Bill To Party No:\s*(\d+)/);
-  const shipToGSTIN   = find(/GSTIN No:\s*(30[A-Z0-9]+)/);
-  const shipToPAN     = find(/PAN:\s*(AAACB\w+)/);
-  const shipToNo      = find(/Ship To Party No:\s*(\d+)/);
-  const shipToAddress = find(/(PLOT NO\.[\s\S]+?)(?=GSTIN No:\s*30)/i).replace(/\s+/g, " ").trim();
+  return `${name} ${gsm} GSM`;
+}
 
-  // ── Line Items ─────────────────────────────────────────────────────────────
-  // Span 4 lines: ref / brand-p1 / brand-p2("GSM") / concatenated-data
-  // Data line: "FBD - JK TUFFCOTE" + materialCode + [packages] + HSN + qty.00 + amount.00 + route
-  const lineItems = [];
+/**
+ * Helper to match fields regardless of whether the label comes before or after the value.
+ */
+function findAny(text, regexes) {
+  for (const rx of regexes) {
+    const m = text.match(rx);
+    if (m && m[1]) return m[1].trim();
+  }
+  return "";
+}
 
-  for (let i = 0; i < lines.length; i++) {
-    if (!/^PO\d+-\d{3}$/.test(lines[i])) continue;
+/**
+ * Core Line Item Parser
+ */
+function parsePOLineItems(text) {
+  const poRefs = [];
+  // Find all Line Item PO References (e.g. PO260481134-020)
+  const poRegex = /(PO\d+-\d{3})/g;
+  let match;
 
-    const fullLineRef  = lines[i];                       // "PO260481134-020"
-    const lineNo       = fullLineRef.split("-").pop();   // "020"
-    const brandP1      = lines[i + 1] || "";            // "JK TUFFCOTE 300"
-    // lines[i+2] is "GSM", lines[i+3] is the data line
-    const dataLine     = lines[i + 3] || "";
+  while ((match = poRegex.exec(text)) !== null) {
+    const fullLineRef = match[1];
+    const lineNo = fullLineRef.split("-").pop();
 
-    // Anchor on HSN code (always "48109200") to split before/after
-    const hsnCode = "48109200";
-    const hsnIdx  = dataLine.indexOf(hsnCode);
-    if (hsnIdx === -1) continue;
+    // Look ahead briefly to secure the GSM rating for this item
+    const forwardText = text.slice(match.index, match.index + 150);
+    const gsmMatch = forwardText.match(/(\d{3})\s*GSM/i);
+    const gsm = gsmMatch ? gsmMatch[1] : "300";
 
-    const before = dataLine.slice(0, hsnIdx);
-    const after  = dataLine.slice(hsnIdx + hsnCode.length);
+    poRefs.push({ fullLineRef, lineNo, gsm });
+  }
 
-    // before: "FBD - JK TUFFCOTEFBD/BDL/84.00X63.50/100/16.0016"
-    const brand   = "FBD - JK TUFFCOTE";
-    const matRaw  = before.slice(before.indexOf("FBD/"));
-    // Material code ends at /nn.nn then optional package integer
-    const matM    = matRaw.match(/^(FBD\/[A-Z]+\/[\d.]+X[\d.]+\/\d+\/\d+\.\d{2})(\d*)$/);
-    const materialCode = matM ? matM[1] : matRaw;
-    const noPackages   = matM ? matM[2] : "";
+  const dataBlocks = [];
+  // Regex isolates the material code, HSN, separated amounts, and Route code.
+  // It handles squashed numbers (e.g. 1024.0075776.00) perfectly by requiring the \.d{2} boundaries.
+  const blockRegex = /([A-Z]{3}\/[A-Z0-9]+\/[\d.:X]+\/\d+\/[\d.]+)(?:[\s\S]{0,100}?)(48109200)(?:[\s\S]{0,100}?)([\d,]+\.\d{2})\s*([\d,]+\.\d{2})\s*(SW[A-Z0-9]{2,5})/g;
 
-    // after: "1024.0075776.00SWGO03" — split on first ".00" boundary
-    const firstDotZero = after.indexOf(".00");
-    if (firstDotZero === -1) continue;
-    const qty    = parseFloat(after.slice(0, firstDotZero + 3));
-    const rest   = after.slice(firstDotZero + 3);
-    const secDot = rest.indexOf(".00");
-    if (secDot === -1) continue;
-    const amount    = parseFloat(rest.slice(0, secDot + 3));
-    const routeCode = rest.slice(secDot + 3).trim();
-
-    // Derive Tally description from material code dimensions
-    // FBD/BDL/84.00X63.50/100/16.00 → "TC - 300 GSM - 84 X 63.5"
-    const gsmM  = brandP1.match(/(\d{3})/);
-    const gsm   = gsmM ? gsmM[1] : "300";
-    const sizeM = materialCode.match(/(\d+\.\d+)X(\d+\.\d+)/);
-    let description = `JK TUFFCOTE ${gsm} GSM`;
-    if (sizeM) {
-      const w = parseFloat(sizeM[1]).toFixed(1);   // 84.00 → "84.0"
-      const h = parseFloat(sizeM[2]).toFixed(1);   // 63.50 → "63.5"
-      description = `TC - ${gsm} GSM - ${w} X ${h}`; // matches Tally exactly
-    }
-
-    lineItems.push({
-      lineNo,
-      fullLineRef,
-      itemBrand:    `${brandP1} GSM ${brand}`.trim(),
-      brand,
-      materialCode,
-      description,
-      hsnCode,
-      noPackages,
-      quantityKg:   qty,
-      unit:         "Kgs",
-      amount,
-      ratePerKg:    qty > 0 ? Math.round((amount / qty) * 100) / 100 : 0,
-      routeCode,
-      fscType:      "",
+  while ((match = blockRegex.exec(text)) !== null) {
+    dataBlocks.push({
+      materialCode: match[1],
+      hsnCode: match[2],
+      qty: cleanQty(match[3]),
+      amount: cleanAmount(match[4]),
+      routeCode: match[5]
     });
   }
 
-  // ── Totals ─────────────────────────────────────────────────────────────────
-  const totalQtyKg  = cleanQty(find(/Total Quantity \(kg\)\s*:\s*([\d,\.]+)/));
-  const totalAmount = cleanAmount(find(/Total Amount:\s*([\d,\.]+)/));
+  const items = [];
+  const maxLen = Math.min(poRefs.length, dataBlocks.length);
+
+  // Zip the lists together sequentially
+  for (let i = 0; i < maxLen; i++) {
+    const ref = poRefs[i];
+    const block = dataBlocks[i];
+
+    const brandPrefix = block.materialCode.slice(0, 3);
+    const description = buildDescription(brandPrefix, ref.gsm, block.materialCode);
+
+    const ratePerKg = block.qty > 0 ? (block.amount / block.qty) : 0;
+
+    items.push({
+      lineNo: ref.lineNo,
+      fullLineRef: ref.fullLineRef,
+      itemBrand: `${brandPrefix} - ${BRAND_CODE_MAP[brandPrefix]?.fullName || brandPrefix} ${ref.gsm} GSM`,
+      brand: `${brandPrefix} - ${BRAND_CODE_MAP[brandPrefix]?.fullName || brandPrefix}`,
+      materialCode: block.materialCode,
+      description: description,
+      hsnCode: block.hsnCode,
+      noPackages: "", // Variable, unneeded for Tally processing
+      quantityKg: block.qty,
+      unit: "Kgs",
+      amount: block.amount,
+      ratePerKg: Math.round(ratePerKg * 100) / 100,
+      routeCode: block.routeCode,
+      fscType: ""
+    });
+  }
+
+  return items;
+}
+
+function parseSalesforcePO(text) {
+  // Strip hard returns to normalize layout strings
+  const cleanText = text.replace(/\r/g, "");
+
+  // ── Header fields ────────────────────────────────────────────────────────
+  const poNumber      = findAny(cleanText, [/Purchase Order No:\s*(\S+)/i, /(\S+)\s+Purchase Order No:/i]);
+  const internalPONo  = findAny(cleanText, [/Internal Customer PO NO:\s*(\S+)/i, /(\S+)\s+Internal Customer PO NO:/i]);
+  const documentDate  = findAny(cleanText, [/Document Date:\s*([\d]{4}-[\d]{2}-[\d]{2})/i, /([\d]{4}-[\d]{2}-[\d]{2})\s+Document Date:/i]);
+  const deliveryDate  = findAny(cleanText, [/Requested Delivery Date:\s*([\d]{4}-[\d]{2}-[\d]{2})/i, /([\d]{4}-[\d]{2}-[\d]{2})\s+Requested Delivery Date:/i]);
+
+  const orderType     = findAny(cleanText, [/Order Type\s*:\s*(.+?)(?:\n|$)/i]) || "JKPL Domestic Sales";
+  const distChannel   = findAny(cleanText, [/Distribution Channel\s*:\s*(.+?)(?:\n|$)/i]) || "32 - Direct";
+  const plantDepot    = findAny(cleanText, [/Plant Depot:\s*(.+?)(?:\n|$)/i]) || "2200 - JK PAPER LIMITED";
+  const paymentTerms  = findAny(cleanText, [/Payment Terms:\s*(.+?)(?:\n|$)/i]);
+  const insurance     = findAny(cleanText, [/Insurance:\s*(.+?)(?:\n|$)/i]);
+  const transportMode = findAny(cleanText, [/Mode Of Transport:\s*(.+?)(?:\n|$)/i]);
+  const deliveryTo    = findAny(cleanText, [/Delivery To:\s*(.+?)(?:\n|$)/i]);
+
+  // ── GSTINs & PANs ────────────────────────────────────────────────────────
+  // Dynamically map all GSTIN/PAN patterns found and assign the first to Bill To, the last to Ship To
+  const allGSTINs   = [...cleanText.matchAll(/[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}[Zz][0-9A-Z]{1}/g)].map(m => m[0]);
+  const billToGSTIN = allGSTINs[0] || "";
+  const shipToGSTIN = allGSTINs.filter(g => g !== billToGSTIN).pop() || allGSTINs[allGSTINs.length - 1] || "";
+
+  const allPANs = [...cleanText.matchAll(/[A-Z]{5}[0-9]{4}[A-Z]{1}/g)].map(m => m[0]);
+  const billToPAN = allPANs[0] || "";
+  const shipToPAN = allPANs.filter(p => p !== billToPAN).pop() || allPANs[allPANs.length - 1] || "";
+
+  // ── Addresses ────────────────────────────────────────────────────────────
+  const addresses = [...cleanText.matchAll(/Address:\s*([\s\S]+?)(?:GSTIN|PAN)/g)].map(m => m[1].replace(/\s+/g, " ").trim());
+  const billToAddress = addresses[0] || "219, Podar Chambers, 109, S.A. Brelvi Road, Fort, Mumbai - 400 001";
+  const shipToAddress = addresses[addresses.length - 1] || "";
+
+  const shipToNo      = findAny(cleanText, [/Ship To Party No:\s*(\d+)/i]);
+  const shipToNameRaw = findAny(cleanText, [/Ship To Party Name:\s*\d+\s*-\s*(.+?)(?:\n|$)/i]);
+  const shipToName    = shipToNameRaw.split('-')[0].trim() || "BORKAR PACKAGING";
+
+  // ── Totals ───────────────────────────────────────────────────────────────
+  const totalQtyKg  = cleanQty(findAny(cleanText, [/Total Quantity \(kg\)\s*:\s*([\d,\.]+)/i, /([\d,\.]+)\s*Total Quantity \(kg\)/i]));
+  const totalAmount = cleanAmount(findAny(cleanText, [/Total Amount:\s*([\d,\.]+)/i, /([\d,\.]+)\s*Total Amount/i]));
+
   const billToState = deriveStateFromGSTIN(billToGSTIN);
   const shipToState = deriveStateFromGSTIN(shipToGSTIN);
   const gstType     = determineGSTType(billToGSTIN, shipToGSTIN);
 
+  // ── Execute Zip Parse ────────────────────────────────────────────────────
+  const lineItems = parsePOLineItems(cleanText);
+
   return {
     source: "SALESFORCE",
     header: {
-      poNumber, internalPONo, documentDate: docDate, deliveryDate,
-      orderType, distChannel, plantDepot, paymentTerms, insurance,
-      transportMode, deliveryTo,
+      poNumber, internalPONo, documentDate, deliveryDate, orderType,
+      distChannel, plantDepot, paymentTerms, insurance, transportMode, deliveryTo
     },
     billTo: {
       partyName: "BHARAT PAPER MART",
-      address: "219, Podar Chambers, 109, S.A. Brelvi Road, Fort, Mumbai - 400 001",
+      address: billToAddress,
       email: "bharatpapermart@gmail.com",
       gstin: billToGSTIN, pan: billToPAN,
-      stateName: billToState.stateName, stateCode: billToState.stateCode,
+      stateName: billToState.stateName, stateCode: billToState.stateCode
     },
     shipTo: {
-      partyNo: shipToNo, partyName: "BORKAR PACKAGING PVT. LTD.- GOA",
-      address: shipToAddress,
+      partyNo: shipToNo, partyName: shipToName, address: shipToAddress,
       gstin: shipToGSTIN, pan: shipToPAN,
-      stateName: shipToState.stateName, stateCode: shipToState.stateCode,
+      stateName: shipToState.stateName, stateCode: shipToState.stateCode
     },
     lineItems,
-    totals: { totalQtyKg, totalAmount, gstType },
+    totals: { totalQtyKg, totalAmount, gstType }
   };
 }
 
