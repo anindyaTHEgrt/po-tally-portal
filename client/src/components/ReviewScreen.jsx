@@ -70,6 +70,10 @@ export default function ReviewScreen({ data: initialData, onPushed, onBack }) {
 
     const warnings = data.validation?.warnings || [];
 
+    // Logic to enforce mandatory Voucher No.
+    const isVoucherValid = !!(data.header?.voucherNo && data.header.voucherNo.trim() !== "");
+    const canPush = !loading && isVoucherValid;
+
     // Pre-fill Tally company from server config on mount
     useEffect(() => {
         getTallyConfig()
@@ -114,6 +118,7 @@ export default function ReviewScreen({ data: initialData, onPushed, onBack }) {
     }
 
     async function handlePush() {
+        if (!canPush) return;
         setLoading(true);
         setError("");
         try {
@@ -147,29 +152,31 @@ export default function ReviewScreen({ data: initialData, onPushed, onBack }) {
                         Review Extracted Data
                     </h2>
                     <p style={{ color: "var(--text-muted)", fontSize: 13, marginTop: 3 }}>
-                        PO {data.meta?.sfPONumber} · Voucher {data.header?.voucherNo}
+                        PO {data.meta?.sfPONumber} · Voucher {data.header?.voucherNo || "Pending"}
                     </p>
                 </div>
+
+                {/* Dynamically Styled Push Button */}
                 <button
                     onClick={handlePush}
-                    disabled={loading}
+                    disabled={!canPush}
                     style={{
                         display:      "flex", alignItems: "center", gap: 8,
                         padding:      "10px 22px",
-                        background:   "var(--accent)",
-                        color:        "#fff",
+                        background:   canPush ? "var(--accent)" : "var(--bg-hover)",
+                        color:        canPush ? "#fff" : "var(--text-dim)",
                         border:       "none",
                         borderRadius: "var(--radius)",
                         fontSize:     14, fontWeight: 600,
-                        cursor:       loading ? "wait" : "pointer",
+                        cursor:       loading ? "wait" : (canPush ? "pointer" : "not-allowed"),
                         fontFamily:   "var(--font)",
-                        opacity:      loading ? 0.7 : 1,
-                        transition:   "opacity var(--transition)",
+                        opacity:      loading ? 0.7 : (!canPush ? 0.6 : 1),
+                        transition:   "all var(--transition)",
                     }}
                 >
                     {loading ? (
                         <div style={{ width: 14, height: 14, border: "2px solid rgba(255,255,255,0.4)", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.7s linear infinite" }} />
-                    ) : <Send size={14} />}
+                    ) : <Send size={14} color={canPush ? "#fff" : "var(--text-dim)"} />}
                     {loading ? "Pushing to Tally…" : "Push to Tally"}
                 </button>
             </div>
@@ -205,15 +212,43 @@ export default function ReviewScreen({ data: initialData, onPushed, onBack }) {
 
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
 
-                {/* Header */}
+                {/* Header Section */}
                 <Section title="Purchase Order Header" delay={0.05}>
                     <Grid cols={3}>
-                        <Field label="Voucher No."  value={data.header?.voucherNo}    onChange={(v) => set("header.voucherNo", v)} mono />
-                        <Field label="SF PO Ref"    value={data.header?.sfPORef}      onChange={(v) => set("header.sfPORef", v)}   mono />
-                        <Field label="Date"         value={data.header?.date}         onChange={(v) => set("header.date", v)} />
-                        <Field label="Delivery Date" value={data.header?.deliveryDate} onChange={(v) => set("header.deliveryDate", v)} />
-                        <Field label="Destination"  value={data.header?.destination}  onChange={(v) => set("header.destination", v)} />
-                        <Field label="Payment Terms" value={data.header?.paymentTerms} onChange={(v) => set("header.paymentTerms", v)} />
+                        <Field
+                            label="Voucher No. *"
+                            value={data.header?.voucherNo}
+                            onChange={(v) => set("header.voucherNo", v)}
+                            mono
+                            warn={!data.header?.voucherNo}
+                        />
+                        <Field
+                            label="SF PO Ref"
+                            value={data.header?.sfPORef}
+                            onChange={(v) => set("header.sfPORef", v)}
+                            mono
+                        />
+                        <Field
+                            label="Date"
+                            value={data.header?.date}
+                            onChange={(v) => set("header.date", v)}
+                        />
+                        <Field
+                            label="Delivery Date"
+                            value={data.header?.deliveryDate}
+                            onChange={(v) => set("header.deliveryDate", v)}
+                        />
+                        <Field
+                            label="Destination"
+                            value={data.header?.destination}
+                            onChange={(v) => set("header.destination", v)}
+                        />
+                        <Field
+                            label="Payment Terms"
+                            value={data.header?.paymentTerms}
+                            onChange={(v) => set("header.paymentTerms", v)}
+                            warn={!data.header?.paymentTerms}
+                        />
                     </Grid>
                 </Section>
 
