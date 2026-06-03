@@ -50,7 +50,9 @@ router.post(
         const sfData = parseSalesforcePO(sfText);
 
         // ── Build unified structure (SF-only, no email PO) ───────────────────
-        const merged = mergePOData(sfData);
+        // gstRate can be supplied as a form field (e.g. "12" or "18"); defaults to 18
+        const gstRatePct = parseFloat(req.body?.gstRate) || 18;
+        const merged = mergePOData(sfData, gstRatePct);
 
         return res.json({
           success:   true,

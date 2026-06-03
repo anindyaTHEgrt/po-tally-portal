@@ -49,6 +49,38 @@ function todayTally() {
     return dateToTally(new Date());
 }
 
+// ── Direct tally-code → stock group map ──────────────────────────────────────
+// The item description always starts with the tally code (e.g. "TC - 230 GSM …").
+// Word-matching against group names fails for these because the abbreviation
+// ("TC", "UL", "PL" …) never appears inside the group name string.
+// This table is the single source of truth; add new codes here as needed.
+const TALLY_CODE_GROUP_MAP = {
+    // ── Core CPM grades ───────────────────────────────────────────────────
+    "TC":    "JK TUFFCOTE BOARD",
+    "TCAF":  "JK TUFFCOTE ANTIFUNGAL",
+    "PL":    "JK PLATINA BOARD",
+    "UL":    "JK ULTIMA BOARD",
+    // ── Specialty / coated ────────────────────────────────────────────────
+    "AT":    "JK AQUA TUB BOARD",
+    "CC":    "JK CLUB CARD",
+    "IVB":   "JK IV BOARD",
+    "TP":    "JK TUFFPACK BOARD",
+    "JTP":   "JK TARAL PACK",
+    "PNH":   "JK EASY FOLD GC2",
+    "CIG":   "JK CIGARETTE BOARD ( CIG )",
+    // ── Purefil / eco-green grades ────────────────────────────────────────
+    "PSG":   "JK COATED BD - PUREFIL BASE",
+    "EGP2G": "JK ECO GREEN PUREFIL ( P2G )",
+    "KSG":   "JK ECO GREEN PUREFIL",
+    "F1P":   "JK ECO GREEN TUFF FREEZE",
+    // ── Uncoated / surface-sized ──────────────────────────────────────────
+    "CSB":   "JK UNCOATED BOARD",
+    "FBS":   "JK UNCOATED BOARD",
+    // ── Other CPM / Sirpur grades ─────────────────────────────────────────
+    "VFL":   "JK SPARKLE COPIER",
+    "EB":    "JK ENDURA BOARD",
+};
+
 // ── JK Stock Groups ───────────────────────────────────────────────────────────
 const JK_STOCK_GROUPS = [
     "JK AQUA TUB BOARD","JK ARSR STIFFNER","JK ART PAPER","JK BRAILLE PAPER",
@@ -89,9 +121,22 @@ const NOISE = new Set(["JK","THE","A","AN","OF","AND","IN","ON"]);
 function resolveJKStockGroup(description) {
     if (!description) return "JK PAPER";
     const descUpper = description.toUpperCase().trim();
+
+    // ── Step 1: Direct code lookup (most reliable) ────────────────────────
+    // Item descriptions always start with the tally code followed by " - "
+    // e.g. "TC - 230 GSM - 85.5 IN REELS - FSC MIX CREDIT"
+    const codeMatch = descUpper.match(/^([A-Z0-9]+)\s*-/);
+    if (codeMatch) {
+        const group = TALLY_CODE_GROUP_MAP[codeMatch[1].trim()];
+        if (group) return group;
+    }
+
+    // ── Step 2: Exact prefix match against known group names ─────────────
     for (const group of JK_STOCK_GROUPS) {
         if (descUpper.startsWith(group.toUpperCase())) return group;
     }
+
+    // ── Step 3: Word-score fallback (catches full-name descriptions) ──────
     let bestGroup = "JK PAPER", bestScore = 0;
     for (const group of JK_STOCK_GROUPS) {
         const words = group.toUpperCase().split(/[\s\-(),./]+/).filter((w) => w.length > 1 && !NOISE.has(w));
@@ -112,22 +157,41 @@ function xmlEscape(val) {
 
 function buildLedgerXML(party, parentGroup) {
     const group = parentGroup || "Sundry Creditors";
+    const name  = xmlEscape(party.partyName || party.name);
+
+    // Tally requires address as separate <ADDRESS> lines inside <ADDRESS.LIST>.
+    // A single long string in one tag renders blank in the Party Details panel.
+    // Split on newlines then commas, drop empty chunks, cap at 4 lines (Tally limit).
+    const rawAddr   = (party.address || "").trim();
+    const addrLines = rawAddr
+        .split(/\n+/)
+        .map((l) => l.trim())
+        .filter(Boolean)
+        .slice(0, 4);
+
+    if (addrLines.length === 0 && rawAddr) addrLines.push(rawAddr);
+
+    const addressXML = addrLines.length
+        ? addrLines.map((l) => `      <ADDRESS>${xmlEscape(l)}</ADDRESS>`).join("\n")
+        : "      <ADDRESS></ADDRESS>";
+
     return `
 <TALLYMESSAGE xmlns:UDF="TallyUDF">
-  <LEDGER NAME="${xmlEscape(party.partyName || party.name)}" ACTION="Create">
-    <NAME>${xmlEscape(party.partyName || party.name)}</NAME>
-    <PARENT>${group}</PARENT>
+  <LEDGER NAME="${name}" ACTION="Create">
+    <NAME>${name}</NAME>
+    <PARENT>${xmlEscape(group)}</PARENT>
     <GSTREGISTRATIONTYPE>Regular</GSTREGISTRATIONTYPE>
-    <PARTYGSTIN>${xmlEscape(party.gstin)}</PARTYGSTIN>
-    <PANNO>${xmlEscape(party.pan)}</PANNO>
-    <STATENAME>${xmlEscape(party.stateName)}</STATENAME>
+    <PARTYGSTIN>${xmlEscape(party.gstin  || "")}</PARTYGSTIN>
+    <PANNO>${xmlEscape(party.pan         || "")}</PANNO>
+    <STATENAME>${xmlEscape(party.stateName || "")}</STATENAME>
     <COUNTRYNAME>India</COUNTRYNAME>
-    <MAILINGNAME>${xmlEscape(party.partyName || party.name)}</MAILINGNAME>
+    <MAILINGNAME>${name}</MAILINGNAME>
+    <PINCODE></PINCODE>
     <ADDRESS.LIST TYPE="Address">
-      <ADDRESS>${xmlEscape(party.address)}</ADDRESS>
+${addressXML}
     </ADDRESS.LIST>
     <LANGUAGENAME.LIST>
-      <NAME.LIST TYPE="Name"><NAME>${xmlEscape(party.partyName || party.name)}</NAME></NAME.LIST>
+      <NAME.LIST TYPE="Name"><NAME>${name}</NAME></NAME.LIST>
       <LANGUAGEID>1033</LANGUAGEID>
     </LANGUAGENAME.LIST>
   </LEDGER>
@@ -157,6 +221,28 @@ function buildStockItemXML(item) {
 </TALLYMESSAGE>`.trim();
 }
 
+/**
+ * Builds a proper Tally address list XML block.
+ * Tally requires each line as a separate repeated tag — a single long string
+ * renders blank in Party Details and doesn't print in the PDF export.
+ * tagName = "ADDRESS" | "CONSIGNEEADDRESS" | "BUYERADDRESS" | "BASICSHIPADDR"
+ */
+function buildAddressListXML(tagName, rawAddress) {
+    const raw = (rawAddress || "").trim();
+    const lines = raw
+        ? raw.split(/\n+/)
+            .map((l) => l.trim())
+            .filter(Boolean)
+            .slice(0, 4)
+        : [];
+    if (lines.length === 0) lines.push("");
+
+    const innerTags = lines
+        .map((l) => `              <${tagName}>${xmlEscape(l)}</${tagName}>`)
+        .join("\n");
+    return `<${tagName}.LIST TYPE="Address">\n${innerTags}\n            </${tagName}.LIST>`;
+}
+
 // ── Voucher builder ───────────────────────────────────────────────────────────
 
 function buildPurchaseOrderXML(data) {
@@ -172,7 +258,7 @@ function buildPurchaseOrderXML(data) {
 
     console.log(`📅 Voucher date: ${tallyDate}  Due: ${tallyDueDate}  (raw: ${header.date} / ${header.deliveryDate})`);
 
-    // ── Inventory lines ───────────────────────────────────────────────────────
+    // ── Inventory lines ──────────────────────────────────────────────────────
     const inventoryLines = lineItems.map((item) => `
         <ALLINVENTORYENTRIES.LIST>
           <STOCKITEMNAME>${xmlEscape(item.description)}</STOCKITEMNAME>
@@ -238,16 +324,20 @@ function buildPurchaseOrderXML(data) {
             <PARTYGSTIN>${xmlEscape(supplier.gstin)}</PARTYGSTIN>
             <PLACEOFSUPPLY>${xmlEscape(supplier.stateName)}</PLACEOFSUPPLY>
             <CMPGSTIN>${xmlEscape(cmpGstin)}</CMPGSTIN>
-            <STATENAME>${xmlEscape(cmpState)}</STATENAME>
+            <STATENAME>${xmlEscape(supplier.stateName)}</STATENAME>
             <NUMBERINGSTYLE>Manual</NUMBERINGSTYLE>
-            <BASICBASEPARTYNAME>${xmlEscape(billTo.partyName)}</BASICBASEPARTYNAME>
-            <BASICBUYERNAME>${xmlEscape(shipTo.partyName)}</BASICBUYERNAME>
+            <BASICBASEPARTYNAME>${xmlEscape(billTo.partyName || billTo.name)}</BASICBASEPARTYNAME>
+            <BASICBUYERNAME>${xmlEscape(shipTo.partyName || shipTo.name)}</BASICBUYERNAME>
             <BASICFINALDESTINATION>${xmlEscape(header.destination)}</BASICFINALDESTINATION>
             <BASICDUEDATEOFPYMT>${xmlEscape(header.paymentTerms)}</BASICDUEDATEOFPYMT>
-            <CONSIGNEENAME>${xmlEscape(shipTo.partyName)}</CONSIGNEENAME>
+            <CONSIGNEENAME>${xmlEscape(shipTo.partyName || shipTo.name)}</CONSIGNEENAME>
             <CONSIGNEEGSTIN>${xmlEscape(shipTo.gstin)}</CONSIGNEEGSTIN>
             <CONSIGNEESTATENAME>${xmlEscape(shipTo.stateName)}</CONSIGNEESTATENAME>
-            <NARRATION>PO Ref: ${xmlEscape(header.sfPORef)} | Supplier: ${xmlEscape(supplier.name)} | Delivery: ${xmlEscape(header.destination)} | Payment: ${xmlEscape(header.paymentTerms)}</NARRATION>
+            ${buildAddressListXML("CONSIGNEEADDRESS", shipTo.address)}
+            ${buildAddressListXML("ADDRESS", supplier.address)}
+            <BASICSHIPDELIVERYNAME>${xmlEscape(shipTo.partyName || shipTo.name)}</BASICSHIPDELIVERYNAME>
+            ${buildAddressListXML("BASICSHIPADDR", shipTo.address)}
+            <NARRATION></NARRATION>
             <LEDGERENTRIES.LIST>
               <LEDGERNAME>${xmlEscape(supplier.name)}</LEDGERNAME>
               <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>

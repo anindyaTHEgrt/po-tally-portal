@@ -10,10 +10,11 @@
  */
 
 const express = require("express");
+const axios   = require("axios");
 const router  = express.Router();
 
 const { buildPurchaseOrderXML, buildMastersXML, resolveJKStockGroup } = require("../tally/buildXML");
-const { postToTally, checkTallyConnection }                            = require("../tally/sendToTally");
+const { postToTally, checkTallyConnection, TALLY_URL }                 = require("../tally/sendToTally");
 
 /**
  * GET /api/tally/status
@@ -48,6 +49,164 @@ router.get("/resolve-groups", (req, res) => {
     resolvedGroup: resolveJKStockGroup(desc),
   }));
   return res.json({ resolved });
+});
+
+// ── Ledger search helpers ─────────────────────────────────────────────────────
+
+/**
+ * Builds a TallyPrime "Export Collection" XML request for all Ledger masters.
+ *
+ * WHY COLLECTION, NOT REPORT:
+ *   "Export Data" + REPORTNAME only works for screen-reports that exist in the
+ *   Tally menu (e.g. "Balance Sheet"). "List of Ledgers" is not such a report.
+ *   The correct approach is "Export Collection" + COLLECTIONNAME "Ledger" which
+ *   is a built-in Tally master collection and always available.
+ *
+ * FETCH list pulls exactly the fields we need so the response stays small.
+ */
+function buildLedgerExportXML(companyName) {
+  const co = companyName
+      ? `<SVCURRENTCOMPANY>${xmlEscLocal(companyName)}</SVCURRENTCOMPANY>`
+      : "";
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<ENVELOPE>
+  <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
+  <BODY>
+    <EXPORTDATA>
+      <REQUESTDESC>
+        <REPORTNAME>List of Accounts</REPORTNAME>
+        <STATICVARIABLES>
+          ${co}
+          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+          <ACCOUNTTYPE>Ledgers</ACCOUNTTYPE>
+        </STATICVARIABLES>
+      </REQUESTDESC>
+    </EXPORTDATA>
+  </BODY>
+</ENVELOPE>`.trim();
+}
+
+function xmlEscLocal(v) {
+  return String(v || "")
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/**
+ * Parses Tally's XML ledger export into an array of plain objects.
+ * Handles both <LEDGER NAME="..."> (collection export) and
+ * <ACCOUNT NAME="..."> (List of Accounts report) node formats.
+ * Returns: { name, gstin, pan, address, stateName, stateCode, parentGroup }
+ */
+function parseLedgerXML(xmlText) {
+  const ledgers = [];
+
+  // Match either <LEDGER NAME="..."> or <ACCOUNT NAME="..."> blocks
+  const splitRx = /<(?:LEDGER|ACCOUNT)\s+NAME=/gi;
+  const blocks  = xmlText.split(splitRx);
+
+  for (let i = 1; i < blocks.length; i++) {
+    const block = blocks[i];
+
+    const nameMatch = block.match(/^"([^"]+)"/);
+    if (!nameMatch) continue;
+    const name = nameMatch[1].trim();
+
+    const tagVal = (t) => {
+      const m = block.match(new RegExp(`<${t}>([^<]*)<\\/${t}>`, "i"));
+      return (m ? m[1] : "").trim();
+    };
+
+    const gstin  = tagVal("PARTYGSTIN") || tagVal("GSTIN");
+    const pan    = tagVal("PANNO")      || tagVal("PAN");
+    const parent = tagVal("PARENT");
+    const state  = tagVal("STATENAME");
+
+    // Address lines stored as repeated <ADDRESS> inside <ADDRESS.LIST>.
+    // Tally exports addresses with HTML entities (&amp; &#13; &#10; etc.) — decode them.
+    const decodeEntities = (str) => str
+        .replace(/&amp;/gi,  "&")
+        .replace(/&lt;/gi,   "<")
+        .replace(/&gt;/gi,   ">")
+        .replace(/&quot;/gi, '"')
+        .replace(/&#13;/gi,  "")
+        .replace(/&#10;/gi,  " ")
+        .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code)))
+        .replace(/\s+/g, " ")
+        .trim();
+
+    const addrLines = [];
+    const addrRx    = /<ADDRESS>([\s\S]*?)<\/ADDRESS>/gi;
+    let   am;
+    while ((am = addrRx.exec(block)) !== null) {
+      const line = decodeEntities(am[1]);
+      if (line) addrLines.push(line);
+    }
+    // Join with newline so buildAddressListXML splits lines correctly.
+    // Avoid ", " which doubles up lines that already end with commas.
+    const address = addrLines.join("\n");
+    const stateCode = gstin ? gstin.slice(0, 2) : "";
+
+    // Only return party ledgers — skip expense/bank/capital accounts
+    const isParty =
+        gstin ||
+        /sundry/i.test(parent) ||
+        /debtor|creditor|customer|supplier|vendor|party/i.test(parent);
+
+    if (!isParty) continue;
+
+    ledgers.push({ name, gstin, pan, address, stateName: state, stateCode, parentGroup: parent });
+  }
+
+  return ledgers;
+}
+
+/**
+ * GET /api/tally/ledgers?search=borkar&company=BPM+TEST&limit=20
+ * Searches Tally ledger masters and returns matching party ledgers.
+ * Response: { success, ledgers: [{ name, gstin, pan, address, stateName, stateCode }] }
+ */
+router.get("/ledgers", async (req, res) => {
+  const search  = (req.query.search  || "").trim();
+  const company = (req.query.company || process.env.TALLY_COMPANY || "").trim();
+  const limit   = Math.min(parseInt(req.query.limit || "20", 10), 100);
+
+  if (search.length < 2) {
+    return res.status(400).json({ success: false, error: "Provide at least 2 characters to search." });
+  }
+
+  try {
+    const xml      = buildLedgerExportXML(company);
+    const response = await axios.post(TALLY_URL, xml, {
+      headers: { "Content-Type": "text/xml;charset=utf-8" },
+      timeout: 15000,
+    });
+
+    const resText = typeof response.data === "string"
+        ? response.data
+        : JSON.stringify(response.data);
+
+    if (/<LINEERROR>/i.test(resText)) {
+      const msg = (resText.match(/<LINEERROR>([^<]+)<\/LINEERROR>/i) || [])[1] || "Unknown Tally error";
+      return res.status(500).json({ success: false, error: msg });
+    }
+
+    const all      = parseLedgerXML(resText);
+    const q        = search.toUpperCase();
+    const filtered = all
+        .filter((l) => l.name.toUpperCase().includes(q) || (l.gstin && l.gstin.toUpperCase().includes(q)))
+        .slice(0, limit);
+
+    return res.json({ success: true, ledgers: filtered, total: all.length });
+
+  } catch (err) {
+    if (err.code === "ECONNREFUSED") {
+      return res.status(503).json({
+        success: false,
+        error:   `Cannot connect to TallyPrime on ${TALLY_URL}. Make sure Gateway Server is enabled.`,
+      });
+    }
+    return res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 /**

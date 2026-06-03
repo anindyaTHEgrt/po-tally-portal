@@ -49,10 +49,15 @@ function buildDescription(brandPrefix, gsm, materialCode) {
   const name  = entry ? entry.fullName  : brandPrefix;
 
   const safeMatCode = materialCode.replace(/:/g, ".");
+
+  // Detect pallet / bundle packing — triggers " - PALLETS" suffix
+  const isPallets = /\/(PLT|BDL)\//i.test(safeMatCode);
+
   const sheetM = safeMatCode.match(/([\d.]+)X([\d.]+)/);
   if (sheetM) {
     const fmt = n => parseFloat(n).toFixed(1);
-    return `${code} - ${gsm} GSM - ${fmt(sheetM[1])} X ${fmt(sheetM[2])}`;
+    const base = `${code} - ${gsm} GSM - ${fmt(sheetM[1])} X ${fmt(sheetM[2])}`;
+    return isPallets ? `${base} - PALLETS` : base;
   }
 
   const reelM = safeMatCode.match(/\/REL\/([\d.]+)\//);
@@ -62,7 +67,8 @@ function buildDescription(brandPrefix, gsm, materialCode) {
     return `${code} - ${gsm} GSM - ${ws} IN REELS`;
   }
 
-  return `${name} ${gsm} GSM`;
+  const base = `${name} ${gsm} GSM`;
+  return isPallets ? `${base} - PALLETS` : base;
 }
 
 /**

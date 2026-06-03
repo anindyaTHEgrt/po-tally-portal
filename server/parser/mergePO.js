@@ -3,7 +3,7 @@
  * Builds a unified Tally-ready JSON from the Salesforce PO alone.
  */
 
-const GST_RATE = 0.18;
+const DEFAULT_GST_RATE = 0.18;
 
 // ── JK PAPER LTD. (UNIT CPM) supplier record ──────────────────────────────────
 // Source: Tally ledger screenshot (Party Details panel)
@@ -18,7 +18,8 @@ const JK_PAPER_SUPPLIER = {
   email:     "",
 };
 
-function mergePOData(sfData) {
+function mergePOData(sfData, gstRatePct = 18) {
+  const GST_RATE = gstRatePct / 100;
   // ── Enrich SF line items ─────────────────────────────────────────────────
   const lineItems = sfData.lineItems.map((sfLine) => ({
     lineNo:       sfLine.lineNo,
@@ -97,7 +98,7 @@ function mergePOData(sfData) {
       totalQtyKg: sfData.totals.totalQtyKg,
       baseAmount,
       gstType,
-      gstRatePct: GST_RATE * 100,
+      gstRatePct,
       taxAmount,
       grandTotal,
     },
