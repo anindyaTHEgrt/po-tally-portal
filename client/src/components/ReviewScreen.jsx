@@ -421,6 +421,13 @@ export default function ReviewScreen({ data: initialData, onPushed, onBack }) {
     // Blank all three party sections — user must pick from Tally ledger search
     const cleanedInitial = (() => {
         const d = JSON.parse(JSON.stringify(initialData));
+        // Capture shipTo address BEFORE blanking — use it to pre-fill destination
+        // so the Destination field shows the consignee address from the SF PO on load.
+        // This is overwritten again when the user picks a ledger from the dropdown.
+        const parsedShipToAddress = d.shipTo?.address || "";
+        if (parsedShipToAddress && !d.header?.destination) {
+            d.header.destination = parsedShipToAddress;
+        }
         // billTo is pre-populated from the PDF (hardcoded in parseSalesforcePO) — keep it,
         // user can override by searching. shipTo and supplier must be selected from Tally.
         d.shipTo   = blankParty(d.shipTo);
@@ -491,10 +498,11 @@ export default function ReviewScreen({ data: initialData, onPushed, onBack }) {
                 party.mailingName = ledger.name;
             }
 
-            // When Ship To is selected, set destination to just the party name (short label)
-            // The full address goes into CONSIGNEEADDRESS/BASICSHIPADDR fields, not Destination
+            // When Ship To is selected, always overwrite destination with the ledger's
+            // full address. This is what flows into BASICSHIPADDR + BASICFINALDESTINATION
+            // in buildXML.js — it must be the consignee's delivery address, not their name.
             if (partyKey === "shipTo") {
-                next.header.destination = ledger.name ?? "";
+                next.header.destination = ledger.address || ledger.name || "";
             }
 
             return next;

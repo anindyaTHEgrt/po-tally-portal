@@ -308,7 +308,12 @@ function parseSalesforcePO(text) {
   return {
     source: "SALESFORCE",
     header: {
-      poNumber, internalPONo, documentDate, deliveryDate, orderType,
+      poNumber, internalPONo,
+      documentDate,
+      // deliveryDate = Document Date (PO due date in Tally); requestedDeliveryDate = original SF delivery date
+      deliveryDate: documentDate,
+      requestedDeliveryDate: deliveryDate,
+      orderType,
       distChannel, plantDepot, paymentTerms, insurance, transportMode, deliveryTo
     },
     billTo: {

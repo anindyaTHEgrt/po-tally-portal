@@ -75,10 +75,15 @@ function mergePOData(sfData, gstRatePct = 18) {
       voucherType:  "Purchase Order",
     },
     header: {
-      voucherNo:       sfData.header.internalPONo,
-      sfPORef:         sfData.header.poNumber,
-      date:            sfData.header.documentDate,
-      deliveryDate:    sfData.header.deliveryDate,
+      voucherNo:              sfData.header.internalPONo,
+      sfPORef:                sfData.header.poNumber,
+      // date = Document Date (the PO issue date)
+      date:                   sfData.header.documentDate,
+      // deliveryDate = Document Date — used as ORDERDUEDATE / due date in Tally
+      // (parseSalesforcePO now sets header.deliveryDate = documentDate)
+      deliveryDate:           sfData.header.deliveryDate,
+      // Original SF "Requested Delivery Date" preserved for reference only
+      requestedDeliveryDate:  sfData.header.requestedDeliveryDate || sfData.header.deliveryDate,
       termsOfDelivery: "",
       orderType:       sfData.header.orderType,
       distChannel:     sfData.header.distChannel,

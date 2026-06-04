@@ -12,6 +12,8 @@
  *  7. EFFECTIVEDATE added to voucher header
  *  8. PURCHASE_LEDGER default updated to PURCHASE JK (INTERSTATE)
  *  9. GST ledger entries removed from voucher (Purchase Orders don't carry tax entries)
+ * 10. Invoice To (BPM) — BUYERNAME/BUYERGSTIN/BUYERSTATENAME/BASICBUYERADDRESS added;
+ *     hardcoded BPM_* constants act as fallback when billTo fields are blank.
  */
 
 const TALLY_COMPANY    = process.env.TALLY_COMPANY    || "BPM TEST";
@@ -21,6 +23,17 @@ const PURCHASE_LEDGER  = process.env.PURCHASE_LEDGER  || "PURCHASE JK (INTERSTAT
 const IGST_LEDGER      = process.env.IGST_LEDGER      || "IGST";
 const CGST_LEDGER      = process.env.CGST_LEDGER      || "CGST";
 const SGST_LEDGER      = process.env.SGST_LEDGER      || "SGST";
+
+// ── Bharat Paper Mart "Invoice To" defaults ───────────────────────────────────
+// These are used whenever the billTo object from the parsed PO is missing a field.
+// Override via env vars if needed (e.g. for a different company profile).
+const BPM_NAME       = process.env.BPM_NAME       || "BHARAT PAPER MART";
+const BPM_ADDRESS    = process.env.BPM_ADDRESS    || "219, Podar Chambers\n109, S.A. Brelvi Road\nFort, Mumbai - 400 001";
+const BPM_GSTIN      = process.env.BPM_GSTIN      || "27AAJFB0186H1ZH";
+const BPM_STATE      = process.env.BPM_STATE      || "Maharashtra";
+const BPM_STATE_CODE = process.env.BPM_STATE_CODE || "27";
+const BPM_PAN        = process.env.BPM_PAN        || "AAJFB0186H";
+const BPM_EMAIL      = process.env.BPM_EMAIL      || "bharatpapermart@gmail.com";
 
 // ── Date utilities ────────────────────────────────────────────────────────────
 
@@ -266,6 +279,19 @@ function buildAddressListXML(tagName, rawAddress) {
 
 function buildPurchaseOrderXML(data) {
     const { header, billTo, shipTo, supplier, lineItems, totals } = data;
+
+    // ── Resolve "Invoice To" (billTo) with BPM hardcoded defaults as fallback ──
+    // The parsed PDF may leave some fields blank; the constants at the top of this
+    // file act as the single source of truth for Bharat Paper Mart's own details.
+    const resolvedBillTo = {
+        name:      billTo.partyName || billTo.name  || BPM_NAME,
+        gstin:     billTo.gstin                     || BPM_GSTIN,
+        stateName: billTo.stateName                 || BPM_STATE,
+        stateCode: billTo.stateCode || (billTo.gstin ? billTo.gstin.slice(0,2) : BPM_STATE_CODE),
+        address:   billTo.address                   || BPM_ADDRESS,
+        pan:       billTo.pan                       || BPM_PAN,
+        email:     billTo.email                     || BPM_EMAIL,
+    };
     const company        = data.tallyCompany    || TALLY_COMPANY;
     const cmpGstin       = data.tallyGstin      || TALLY_GSTIN;
     const cmpState       = data.tallyState      || TALLY_STATE;
@@ -345,7 +371,14 @@ function buildPurchaseOrderXML(data) {
             <CMPGSTIN>${xmlEscape(cmpGstin)}</CMPGSTIN>
             <STATENAME>${xmlEscape(resolveStateName(supplier.stateName, supplier.stateCode, supplier.gstin))}</STATENAME>
             <NUMBERINGSTYLE>Manual</NUMBERINGSTYLE>
-            <BASICBASEPARTYNAME>${xmlEscape(billTo.partyName || billTo.name)}</BASICBASEPARTYNAME>
+
+            <!-- Invoice To (Bill To) box — company issuing the PO -->
+            <BASICBASEPARTYNAME>${xmlEscape(resolvedBillTo.name)}</BASICBASEPARTYNAME>
+            <BUYERNAME>${xmlEscape(resolvedBillTo.name)}</BUYERNAME>
+            <BUYERGSTIN>${xmlEscape(resolvedBillTo.gstin)}</BUYERGSTIN>
+            <BUYERSTATENAME>${xmlEscape(resolveStateName(resolvedBillTo.stateName, resolvedBillTo.stateCode, resolvedBillTo.gstin))}</BUYERSTATENAME>
+            <BUYERSTATECODE>${xmlEscape(resolvedBillTo.stateCode)}</BUYERSTATECODE>
+            ${buildAddressListXML("BASICBUYERADDRESS", resolvedBillTo.address)}
 
             <!-- Consignee (Ship to) box — Tally prints from BASICBUYERNAME + BASICSHIPADDR -->
             <BASICBUYERNAME>${xmlEscape(shipTo.partyName || shipTo.name)}</BASICBUYERNAME>
