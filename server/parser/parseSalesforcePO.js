@@ -87,6 +87,9 @@ function findAny(text, regexes) {
  * Core Line Item Parser
  */
 function parsePOLineItems(text) {
+  console.log("\n=== STARTING LINE ITEM PARSING ===");
+
+  // 1. Check for PO References
   const poRefs = [];
   const poRegex = /(PO\d+-\d{3})/g;
   let match;
@@ -94,22 +97,47 @@ function parsePOLineItems(text) {
   while ((match = poRegex.exec(text)) !== null) {
     const fullLineRef = match[1];
     const lineNo = fullLineRef.split("-").pop();
-
     const forwardText = text.slice(match.index, match.index + 150);
     const gsmMatch = forwardText.match(/(\d{3})\s*GSM/i);
     const gsm = gsmMatch ? gsmMatch[1] : "300";
-
     poRefs.push({ fullLineRef, lineNo, gsm });
+    console.log(`[DEBUG] Found PO Ref: ${fullLineRef} (GSM: ${gsm})`);
   }
+  console.log(`[DEBUG] Total PO Refs found: ${poRefs.length}`);
 
+  // 2. Pre-check: Does the text even contain the Material Codes?
+  const materialCodeOnlyRegex = /([A-Z]{2,4}\/[A-Z0-9-]+\/[\d.:X]+\/\d+\/[\d.]+)/g;
+  const foundMaterials = [...text.matchAll(materialCodeOnlyRegex)];
+  console.log(`\n[DEBUG] Found ${foundMaterials.length} raw material codes in text.`);
+  foundMaterials.forEach((m, i) => console.log(`  -> Material ${i + 1}: ${m[1]}`));
+
+  // 3. The Strict Block Regex (The one that is currently failing)
   const dataBlocks = [];
-  const blockRegex = /([A-Z]{3}\/[A-Z0-9]+\/[\d.:X]+\/\d+\/[\d.]+)(?:[\s\S]{0,100}?)(48109200)([\s\S]{0,100}?)([\d,]+[.,]\d{2})([\s\S]{0,30}?)([\d,]+[.,]\d{2})([\s\S]{0,30}?)(SW[A-Z0-9]{2,5})/gi;
+
+  // THE FINAL REGEX:
+  // 1. Mat Code (Group 1): Relaxed decimals (?:[.:]\d{1,2})? but capped weight to \d{1,4} to stop bleeding.
+  //    Now safely captures 305, 30.5, and 16.00.
+  // 2. HSN (Group 2): Strictly anchored to 8 digits (\d{8}).
+  // 3. FSC Gap (Group 3): (FSC\D*(?:\d{1,3}%\D*)?|\D{0,50}?) strictly forbids eating the 600 from 6000.00.
+  // 4. Qty/Amt (Groups 4 & 6): Strictly 2 decimals, strictly forbids leading zeros.
+  const blockRegex = /([A-Z]{3}\/[A-Z0-9-]+\/[\d.:X]+(?:\/\d+\/\d{1,4}(?:[.:]\d{1,2})?)?)(?:[\s\S]{0,50}?)(\d{8})(FSC\D*(?:\d{1,3}%\D*)?|\D{0,50}?)([1-9][\d,]*[.,]\d{2}|0[.,]\d{2})(\s*)([1-9][\d,]*[.,]\d{2}|0[.,]\d{2})(\s*)([A-Z0-9]{4,10})/gi;
+
+
+  console.log("\n=== RUNNING STRICT BLOCK REGEX ===");
+  let blockCount = 0;
 
   while ((match = blockRegex.exec(text)) !== null) {
-    const gap = match[3];
-    let fscType = "";
+    blockCount++;
+    console.log(`\n[DEBUG] Block Match #${blockCount} Successful!`);
+    console.log(`  -> Material Code: ${match[1]}`);
+    console.log(`  -> HSN:           ${match[2]}`);
+    console.log(`  -> Gap 1 (FSC):   ${JSON.stringify(match[3])}`);
+    console.log(`  -> Quantity:      ${match[4]}`);
+    console.log(`  -> Amount:        ${match[6]}`);
+    console.log(`  -> Route:         ${match[8]}`);
 
-    const fscMatch = gap.match(/(FSC[a-zA-Z\s]+)/i);
+    let fscType = "";
+    const fscMatch = match[3].match(/(FSC[a-zA-Z\s]+)/i);
     if (fscMatch) {
       fscType = fscMatch[1].replace(/[\r\n",]/g, " ").replace(/\s+/g, " ").trim().toUpperCase();
     }
@@ -124,19 +152,34 @@ function parsePOLineItems(text) {
     });
   }
 
+  console.log(`\n[DEBUG] Total complete data blocks matched: ${dataBlocks.length}`);
+
+  // 4. DIAGNOSTIC DUMP: If we found materials but the strict regex failed, dump the text.
+  if (dataBlocks.length === 0 && foundMaterials.length > 0) {
+    console.log("\n[ERROR] Material codes were found, but the strict regex failed to match the full row.");
+    console.log("        This means the text structure between the Material Code and the Route Code");
+    console.log("        does NOT match the expected quotes (\") or gap limits.");
+
+    const firstMatIndex = text.indexOf(foundMaterials[0][1]);
+    if (firstMatIndex !== -1) {
+      console.log("\n=== DIAGNOSTIC TEXT DUMP (300 chars after first material code) ===");
+      // stringify will reveal hidden newline \n and quote " characters
+      console.log(JSON.stringify(text.substring(firstMatIndex, firstMatIndex + 300)));
+      console.log("==================================================================\n");
+    }
+  }
+
+  // 5. Final Mapping
   const items = [];
   const maxLen = Math.min(poRefs.length, dataBlocks.length);
 
   for (let i = 0; i < maxLen; i++) {
     const ref = poRefs[i];
     const block = dataBlocks[i];
-
     const brandPrefix = block.materialCode.slice(0, 3);
-    let description = buildDescription(brandPrefix, ref.gsm, block.materialCode);
 
-    if (block.fscType) {
-      description += ` - ${block.fscType}`;
-    }
+    let description = buildDescription(brandPrefix, ref.gsm, block.materialCode);
+    if (block.fscType) description += ` - ${block.fscType}`;
 
     const ratePerKg = block.qty > 0 ? (block.amount / block.qty) : 0;
 
@@ -158,9 +201,9 @@ function parsePOLineItems(text) {
     });
   }
 
+  console.log("=== FINISHED LINE ITEM PARSING ===\n");
   return items;
 }
-
 function parseSalesforcePO(text) {
   const cleanText = text.replace(/\r/g, "");
 
