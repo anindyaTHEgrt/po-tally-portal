@@ -329,7 +329,7 @@ function buildPurchaseOrderXML(data) {
               <UDF:AWTSPECIALRATE DESC="\`AWTSpecialRate\`"> 0</UDF:AWTSPECIALRATE>
             </UDF:AWTSPECIALRATE.LIST>
             <UDF:AWTBATCHREELSHEET.LIST DESC="\`AWTBatchReelSheet\`" ISLIST="YES" TYPE="String" INDEX="51007">
-              <UDF:AWTBATCHREELSHEET DESC="\`AWTBatchReelSheet\`">Sheet</UDF:AWTBATCHREELSHEET>
+              <UDF:AWTBATCHREELSHEET DESC="\`AWTBatchReelSheet\`">${item.reelSheet || "Sheet"}</UDF:AWTBATCHREELSHEET>
             </UDF:AWTBATCHREELSHEET.LIST>
           </BATCHALLOCATIONS.LIST>
           <ACCOUNTINGALLOCATIONS.LIST>
