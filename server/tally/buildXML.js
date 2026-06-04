@@ -187,7 +187,7 @@ function xmlEscape(val) {
 
 // ── Master builders ───────────────────────────────────────────────────────────
 
-function buildLedgerXML(party, parentGroup) {
+function buildLedgerXML(party, parentGroup, action = "Create") {
     const group = parentGroup || "Sundry Creditors";
     const name  = xmlEscape(party.partyName || party.name);
 
@@ -209,7 +209,7 @@ function buildLedgerXML(party, parentGroup) {
 
     return `
 <TALLYMESSAGE xmlns:UDF="TallyUDF">
-  <LEDGER NAME="${name}" ACTION="Create">
+  <LEDGER NAME="${name}" ACTION="${action}">
     <NAME>${name}</NAME>
     <PARENT>${xmlEscape(group)}</PARENT>
     <GSTREGISTRATIONTYPE>Regular</GSTREGISTRATIONTYPE>
@@ -380,10 +380,11 @@ function buildPurchaseOrderXML(data) {
             <BUYERSTATECODE>${xmlEscape(resolvedBillTo.stateCode)}</BUYERSTATECODE>
             ${buildAddressListXML("BASICBUYERADDRESS", resolvedBillTo.address)}
 
-            <!-- Consignee (Ship to) box — Tally prints from BASICBUYERNAME + BASICSHIPADDR -->
+            <!-- Consignee (Ship to) box — name only, NO address tags sent.              -->
+            <!-- Tally 5 prints the consignee address from the ledger master directly.    -->
+            <!-- Sending BASICSHIPADDR/CONSIGNEEADDRESS overwrites it with wrong data.    -->
             <BASICBUYERNAME>${xmlEscape(shipTo.partyName || shipTo.name)}</BASICBUYERNAME>
             <BASICSHIPDELIVERYNAME>${xmlEscape(shipTo.partyName || shipTo.name)}</BASICSHIPDELIVERYNAME>
-            ${buildAddressListXML("BASICSHIPADDR", shipTo.address)}
 
             <!-- Consignee detail fields — used in Party Details panel (Alt+5) -->
             <CONSIGNEENAME>${xmlEscape(shipTo.partyName || shipTo.name)}</CONSIGNEENAME>
@@ -416,11 +417,17 @@ function buildPurchaseOrderXML(data) {
 // ── Masters envelope ──────────────────────────────────────────────────────────
 
 function buildMastersXML(data) {
-    const { billTo, supplier, lineItems } = data;
+    const { billTo, shipTo, supplier, lineItems } = data;
     const company = data.tallyCompany || TALLY_COMPANY;
 
     // billTo (Bharat Paper Mart) — Sundry Debtors (they issue the PO to us)
     const billToLedger = buildLedgerXML(billTo, "Sundry Debtors");
+
+    // shipTo (Consignee) is NOT pushed to masters.
+    // Consignees already exist correctly in Tally. Altering their master on every
+    // push was overwriting the Primary address with whatever came in the payload.
+    // The voucher XML sends CONSIGNEEADDRESS explicitly — that is sufficient.
+    const shipToLedger = "";
 
     // supplier (JK PAPER LTD.- (PAPER DIVISION)) — Sundry Creditors
     const supplierLedger = buildLedgerXML(supplier, "Sundry Creditors");
@@ -446,6 +453,7 @@ function buildMastersXML(data) {
       </REQUESTDESC>
       <REQUESTDATA>
         ${billToLedger}
+        ${shipToLedger}
         ${supplierLedger}
         ${stockMessages}
       </REQUESTDATA>
