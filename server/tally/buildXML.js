@@ -146,6 +146,25 @@ function resolveJKStockGroup(description) {
     return bestScore > 0 ? bestGroup : "JK PAPER";
 }
 
+// GST state code → name (mirrors tally.js — used when stateName is blank on shipTo/supplier)
+const GST_STATE_MAP = {
+    "01":"Jammu and Kashmir","02":"Himachal Pradesh","03":"Punjab","04":"Chandigarh",
+    "05":"Uttarakhand","06":"Haryana","07":"Delhi","08":"Rajasthan","09":"Uttar Pradesh",
+    "10":"Bihar","11":"Sikkim","12":"Arunachal Pradesh","13":"Nagaland","14":"Manipur",
+    "15":"Mizoram","16":"Tripura","17":"Meghalaya","18":"Assam","19":"West Bengal",
+    "20":"Jharkhand","21":"Odisha","22":"Chhattisgarh","23":"Madhya Pradesh",
+    "24":"Gujarat","25":"Daman and Diu","26":"Dadra and Nagar Haveli","27":"Maharashtra",
+    "28":"Andhra Pradesh","29":"Karnataka","30":"Goa","31":"Lakshadweep","32":"Kerala",
+    "33":"Tamil Nadu","34":"Puducherry","35":"Andaman and Nicobar Islands","36":"Telangana",
+    "37":"Andhra Pradesh (New)","38":"Ladakh","97":"Other Territory","99":"Centre Jurisdiction",
+};
+
+function resolveStateName(stateName, stateCode, gstin) {
+    if (stateName) return stateName;
+    const code = stateCode || (gstin ? gstin.slice(0, 2) : "");
+    return GST_STATE_MAP[String(code).padStart(2, "0")] || "";
+}
+
 function xmlEscape(val) {
     if (val === null || val === undefined) return "";
     return String(val)
@@ -322,21 +341,30 @@ function buildPurchaseOrderXML(data) {
             <PARTYLEDGERNAME>${xmlEscape(supplier.name)}</PARTYLEDGERNAME>
             <PERSISTEDVIEW>Invoice Voucher View</PERSISTEDVIEW>
             <PARTYGSTIN>${xmlEscape(supplier.gstin)}</PARTYGSTIN>
-            <PLACEOFSUPPLY>${xmlEscape(supplier.stateName)}</PLACEOFSUPPLY>
+            <PLACEOFSUPPLY>${xmlEscape(resolveStateName(supplier.stateName, supplier.stateCode, supplier.gstin))}</PLACEOFSUPPLY>
             <CMPGSTIN>${xmlEscape(cmpGstin)}</CMPGSTIN>
-            <STATENAME>${xmlEscape(supplier.stateName)}</STATENAME>
+            <STATENAME>${xmlEscape(resolveStateName(supplier.stateName, supplier.stateCode, supplier.gstin))}</STATENAME>
             <NUMBERINGSTYLE>Manual</NUMBERINGSTYLE>
             <BASICBASEPARTYNAME>${xmlEscape(billTo.partyName || billTo.name)}</BASICBASEPARTYNAME>
+
+            <!-- Consignee (Ship to) box — Tally prints from BASICBUYERNAME + BASICSHIPADDR -->
             <BASICBUYERNAME>${xmlEscape(shipTo.partyName || shipTo.name)}</BASICBUYERNAME>
-            <BASICFINALDESTINATION>${xmlEscape(header.destination)}</BASICFINALDESTINATION>
-            <BASICDUEDATEOFPYMT>${xmlEscape(header.paymentTerms)}</BASICDUEDATEOFPYMT>
-            <CONSIGNEENAME>${xmlEscape(shipTo.partyName || shipTo.name)}</CONSIGNEENAME>
-            <CONSIGNEEGSTIN>${xmlEscape(shipTo.gstin)}</CONSIGNEEGSTIN>
-            <CONSIGNEESTATENAME>${xmlEscape(shipTo.stateName)}</CONSIGNEESTATENAME>
-            ${buildAddressListXML("CONSIGNEEADDRESS", shipTo.address)}
-            ${buildAddressListXML("ADDRESS", supplier.address)}
             <BASICSHIPDELIVERYNAME>${xmlEscape(shipTo.partyName || shipTo.name)}</BASICSHIPDELIVERYNAME>
             ${buildAddressListXML("BASICSHIPADDR", shipTo.address)}
+
+            <!-- Consignee detail fields — used in Party Details panel (Alt+5) -->
+            <CONSIGNEENAME>${xmlEscape(shipTo.partyName || shipTo.name)}</CONSIGNEENAME>
+            <CONSIGNEEGSTIN>${xmlEscape(shipTo.gstin)}</CONSIGNEEGSTIN>
+            <CONSIGNEESTATENAME>${xmlEscape(resolveStateName(shipTo.stateName, shipTo.stateCode, shipTo.gstin))}</CONSIGNEESTATENAME>
+            <CONSIGNEESTATECODE>${xmlEscape(shipTo.stateCode || (shipTo.gstin ? shipTo.gstin.slice(0,2) : ""))}</CONSIGNEESTATECODE>
+            ${buildAddressListXML("CONSIGNEEADDRESS", shipTo.address)}
+
+            <!-- Supplier (Bill from) address -->
+            ${buildAddressListXML("ADDRESS", supplier.address)}
+
+            <!-- Destination: short label only, NOT the full address -->
+            <BASICFINALDESTINATION>${xmlEscape(header.destination)}</BASICFINALDESTINATION>
+            <BASICDUEDATEOFPYMT>${xmlEscape(header.paymentTerms)}</BASICDUEDATEOFPYMT>
             <NARRATION></NARRATION>
             <LEDGERENTRIES.LIST>
               <LEDGERNAME>${xmlEscape(supplier.name)}</LEDGERNAME>

@@ -91,6 +91,23 @@ function xmlEscLocal(v) {
       .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+// GST state code → state name map (first 2 digits of GSTIN)
+const GST_STATE_MAP = {
+  "01":"Jammu and Kashmir","02":"Himachal Pradesh","03":"Punjab","04":"Chandigarh",
+  "05":"Uttarakhand","06":"Haryana","07":"Delhi","08":"Rajasthan","09":"Uttar Pradesh",
+  "10":"Bihar","11":"Sikkim","12":"Arunachal Pradesh","13":"Nagaland","14":"Manipur",
+  "15":"Mizoram","16":"Tripura","17":"Meghalaya","18":"Assam","19":"West Bengal",
+  "20":"Jharkhand","21":"Odisha","22":"Chhattisgarh","23":"Madhya Pradesh",
+  "24":"Gujarat","25":"Daman and Diu","26":"Dadra and Nagar Haveli","27":"Maharashtra",
+  "28":"Andhra Pradesh","29":"Karnataka","30":"Goa","31":"Lakshadweep","32":"Kerala",
+  "33":"Tamil Nadu","34":"Puducherry","35":"Andaman and Nicobar Islands","36":"Telangana",
+  "37":"Andhra Pradesh (New)","38":"Ladakh","97":"Other Territory","99":"Centre Jurisdiction",
+};
+
+function deriveStateNameFromCode(code) {
+  return GST_STATE_MAP[String(code).padStart(2, "0")] || "";
+}
+
 /**
  * Parses Tally's XML ledger export into an array of plain objects.
  * Handles both <LEDGER NAME="..."> (collection export) and
@@ -119,7 +136,12 @@ function parseLedgerXML(xmlText) {
     const gstin  = tagVal("PARTYGSTIN") || tagVal("GSTIN");
     const pan    = tagVal("PANNO")      || tagVal("PAN");
     const parent = tagVal("PARENT");
-    const state  = tagVal("STATENAME");
+
+    // STATENAME is often blank in Tally's ledger export for party ledgers.
+    // Derive it from GSTIN prefix (first 2 digits = state code) as reliable fallback.
+    const stateFromTag = tagVal("STATENAME") || tagVal("LEDGERSTATENAME");
+    const stateCode    = gstin ? gstin.slice(0, 2) : "";
+    const state        = stateFromTag || deriveStateNameFromCode(stateCode);
 
     // Address lines stored as repeated <ADDRESS> inside <ADDRESS.LIST>.
     // Tally exports addresses with HTML entities (&amp; &#13; &#10; etc.) — decode them.
@@ -144,7 +166,7 @@ function parseLedgerXML(xmlText) {
     // Join with newline so buildAddressListXML splits lines correctly.
     // Avoid ", " which doubles up lines that already end with commas.
     const address = addrLines.join("\n");
-    const stateCode = gstin ? gstin.slice(0, 2) : "";
+    // stateCode already derived above from GSTIN
 
     // Only return party ledgers — skip expense/bank/capital accounts
     const isParty =
@@ -154,7 +176,7 @@ function parseLedgerXML(xmlText) {
 
     if (!isParty) continue;
 
-    ledgers.push({ name, gstin, pan, address, stateName: state, stateCode, parentGroup: parent });
+    ledgers.push({ name, gstin, pan, address, stateName: state, stateCode, parentGroup: parent, stateFromGSTIN: stateCode });
   }
 
   return ledgers;
@@ -247,6 +269,12 @@ router.post("/push", async (req, res) => {
     }));
     console.log("📦 Stock group resolutions:", JSON.stringify(groupResolutions, null, 2));
 
+    // ── Party data debug — log exactly what address values will go into the XML
+    console.log("🏢 PARTY DATA RECEIVED:");
+    console.log("  billTo  :", JSON.stringify({ name: data.billTo?.partyName, gstin: data.billTo?.gstin, address: data.billTo?.address, state: data.billTo?.stateName }));
+    console.log("  shipTo  :", JSON.stringify({ name: data.shipTo?.partyName, gstin: data.shipTo?.gstin, address: data.shipTo?.address, state: data.shipTo?.stateName }));
+    console.log("  supplier:", JSON.stringify({ name: data.supplier?.name,    gstin: data.supplier?.gstin, address: data.supplier?.address, state: data.supplier?.stateName }));
+
     // ── Step 1: Create masters ───────────────────────────────────────────────
     console.log(`📋 Creating masters for PO: ${data.meta?.sfPONumber}`);
     const mastersXML    = buildMastersXML(data);
@@ -263,7 +291,9 @@ router.post("/push", async (req, res) => {
     // ── Step 2: Push Purchase Order voucher ─────────────────────────────────
     console.log(`🚀 Pushing voucher: ${data.meta?.sfPONumber}`);
     const voucherXML    = buildPurchaseOrderXML(data);
-    console.log("VOUCHER XML:\n", voucherXML);
+    // Log just the party-related section so it's easy to read
+    const partyXMLSnippet = voucherXML.match(/<BASICBASEPARTYNAME>[\s\S]*?<NARRATION>/)?.[0] || "not found";
+    console.log("🔍 PARTY XML SENT TO TALLY:\n", partyXMLSnippet);
     const voucherResult = await postToTally(voucherXML);
 
     if (!voucherResult.success) {
@@ -288,6 +318,12 @@ router.post("/push", async (req, res) => {
       groupResolutions,
       mastersResult,
       voucherResult,
+      // Party snapshot — check this in browser Network tab to confirm address was received
+      partiesSent: {
+        billTo:   { name: data.billTo?.partyName,  gstin: data.billTo?.gstin,   address: data.billTo?.address,   state: data.billTo?.stateName },
+        shipTo:   { name: data.shipTo?.partyName,  gstin: data.shipTo?.gstin,   address: data.shipTo?.address,   state: data.shipTo?.stateName },
+        supplier: { name: data.supplier?.name,     gstin: data.supplier?.gstin, address: data.supplier?.address, state: data.supplier?.stateName },
+      },
     });
   } catch (err) {
     console.error("Tally push error:", err);

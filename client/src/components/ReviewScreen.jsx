@@ -491,9 +491,10 @@ export default function ReviewScreen({ data: initialData, onPushed, onBack }) {
                 party.mailingName = ledger.name;
             }
 
-            // When Ship To is selected, sync Destination field to match
+            // When Ship To is selected, set destination to just the party name (short label)
+            // The full address goes into CONSIGNEEADDRESS/BASICSHIPADDR fields, not Destination
             if (partyKey === "shipTo") {
-                next.header.destination = ledger.address ?? "";
+                next.header.destination = ledger.name ?? "";
             }
 
             return next;
