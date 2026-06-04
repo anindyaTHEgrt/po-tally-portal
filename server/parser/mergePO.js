@@ -36,6 +36,7 @@ function mergePOData(sfData, gstRatePct = 18) {
     amount:       sfLine.amount,
     deliveryDate: sfData.header.deliveryDate,
     routeCode:    sfLine.routeCode,
+    reelSheet:    sfLine.reelSheet || "Sheet",
   }));
 
   // ── Compute GST ──────────────────────────────────────────────────────────

@@ -50,8 +50,9 @@ function buildDescription(brandPrefix, gsm, materialCode) {
 
   const safeMatCode = materialCode.replace(/:/g, ".");
 
-  // Detect pallet / bundle packing — triggers " - PALLETS" suffix
-  const isPallets = /\/(PLT|BDL)\//i.test(safeMatCode);
+  // Detect pallet / bulk packing — triggers " - PALLETS" suffix
+  // PLT = pallet, BLK = bulk/block packing (BDL = bundle — intentionally excluded)
+  const isPallets = /\/(PLT|BLK)\//i.test(safeMatCode);
 
   const sheetM = safeMatCode.match(/([\d.]+)X([\d.]+)/);
   if (sheetM) {
@@ -197,7 +198,8 @@ function parsePOLineItems(text) {
       amount: block.amount,
       ratePerKg: Math.round(ratePerKg * 100) / 100,
       routeCode: block.routeCode,
-      fscType: block.fscType
+      fscType: block.fscType,
+      reelSheet: /\/REL\//i.test(block.materialCode) ? "Reel" : "Sheet",
     });
   }
 

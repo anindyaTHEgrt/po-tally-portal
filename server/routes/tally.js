@@ -31,7 +31,7 @@ router.get("/status", async (req, res) => {
  */
 router.get("/config", (req, res) => {
   return res.json({
-    tallyCompany: process.env.TALLY_COMPANY || "BPM TEST",
+    tallyCompany: process.env.TALLY_COMPANY || "BHARAT PAPER MART",
     tallyPort:    process.env.TALLY_PORT    || 9000,
     tallyState:   process.env.TALLY_STATE   || "Maharashtra",
     tallyGstin:   process.env.TALLY_GSTIN   || "27AAJFB0186H1ZH",
